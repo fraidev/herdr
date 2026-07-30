@@ -3601,6 +3601,61 @@
           ],
           "type": "string"
         },
+        "RuntimeAddParams": {
+          "properties": {
+            "id": {
+              "description": "Stable runtime id (not `local`).",
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/schemas/request/$defs/RuntimeKind"
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "session": {
+              "description": "Optional remote Herdr session name.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "target": {
+              "description": "SSH host for `remote_ssh`, or Unix socket path for `socket`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "kind"
+          ],
+          "type": "object"
+        },
+        "RuntimeKind": {
+          "enum": [
+            "local",
+            "socket",
+            "remote_ssh"
+          ],
+          "type": "string"
+        },
+        "RuntimeTarget": {
+          "properties": {
+            "runtime_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "runtime_id"
+          ],
+          "type": "object"
+        },
         "ServerLiveHandoffParams": {
           "properties": {
             "expected_protocol": {
@@ -5813,6 +5868,70 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/PluginPaneCloseParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "runtime.list",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/EmptyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "runtime.get",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/RuntimeTarget"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "runtime.add",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/RuntimeAddParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "runtime.remove",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/RuntimeTarget"
             }
           },
           "required": [
@@ -9642,6 +9761,77 @@
             },
             {
               "properties": {
+                "runtimes": {
+                  "items": {
+                    "$ref": "#/schemas/success_response/$defs/RuntimeInfo"
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "const": "runtime_list",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "runtimes"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "runtime": {
+                  "$ref": "#/schemas/success_response/$defs/RuntimeInfo"
+                },
+                "type": {
+                  "const": "runtime_info",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "runtime"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "runtime": {
+                  "$ref": "#/schemas/success_response/$defs/RuntimeInfo"
+                },
+                "type": {
+                  "const": "runtime_added",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "runtime"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "removed": {
+                  "type": "boolean"
+                },
+                "runtime_id": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "runtime_removed",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "runtime_id",
+                "removed"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
                 "type": {
                   "const": "ok",
                   "type": "string"
@@ -9653,6 +9843,64 @@
               "type": "object"
             }
           ]
+        },
+        "RuntimeInfo": {
+          "properties": {
+            "kind": {
+              "$ref": "#/schemas/success_response/$defs/RuntimeKind"
+            },
+            "label": {
+              "type": "string"
+            },
+            "last_error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "runtime_id": {
+              "type": "string"
+            },
+            "session": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "$ref": "#/schemas/success_response/$defs/RuntimeStatus"
+            },
+            "target": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "runtime_id",
+            "kind",
+            "label",
+            "status"
+          ],
+          "type": "object"
+        },
+        "RuntimeKind": {
+          "enum": [
+            "local",
+            "socket",
+            "remote_ssh"
+          ],
+          "type": "string"
+        },
+        "RuntimeStatus": {
+          "enum": [
+            "connected",
+            "degraded",
+            "offline",
+            "connecting"
+          ],
+          "type": "string"
         },
         "ServerCapabilities": {
           "properties": {

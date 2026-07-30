@@ -13,6 +13,31 @@ fn print_method_response(id: &'static str, method: Method) -> std::io::Result<i3
     })?)
 }
 
+pub(super) fn runtime_list() -> std::io::Result<i32> {
+    print_method_response(
+        "cli:runtime:list",
+        Method::RuntimeList(EmptyParams::default()),
+    )
+}
+
+pub(super) fn runtime_get(runtime_id: String) -> std::io::Result<i32> {
+    print_method_response(
+        "cli:runtime:get",
+        Method::RuntimeGet(crate::api::schema::RuntimeTarget { runtime_id }),
+    )
+}
+
+pub(super) fn runtime_add(params: crate::api::schema::RuntimeAddParams) -> std::io::Result<i32> {
+    print_method_response("cli:runtime:add", Method::RuntimeAdd(params))
+}
+
+pub(super) fn runtime_remove(runtime_id: String) -> std::io::Result<i32> {
+    print_method_response(
+        "cli:runtime:remove",
+        Method::RuntimeRemove(crate::api::schema::RuntimeTarget { runtime_id }),
+    )
+}
+
 pub(super) fn workspace_list() -> std::io::Result<i32> {
     print_method_response(
         "cli:workspace:list",

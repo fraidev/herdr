@@ -15,6 +15,7 @@ use super::plugins::{
     InstalledPluginInfo, PluginActionInfo, PluginCommandLogInfo, PluginInvocationContext,
     PluginPaneInfo,
 };
+use super::runtimes::RuntimeInfo;
 use super::server::ServerCapabilities;
 use super::session::SessionSnapshot;
 use super::tabs::TabInfo;
@@ -244,6 +245,19 @@ pub enum ResponseResult {
     ConfigReload {
         status: crate::config::ConfigReloadStatus,
         diagnostics: Vec<String>,
+    },
+    RuntimeList {
+        runtimes: Vec<RuntimeInfo>,
+    },
+    RuntimeInfo {
+        runtime: RuntimeInfo,
+    },
+    RuntimeAdded {
+        runtime: RuntimeInfo,
+    },
+    RuntimeRemoved {
+        runtime_id: String,
+        removed: bool,
     },
     Ok {},
 }

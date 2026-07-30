@@ -970,6 +970,105 @@ fn plugin_link_list_unlink_round_trip() {
 }
 
 #[test]
+fn runtime_list_add_get_remove_round_trip() {
+    let list = Request {
+        id: "runtime_list".into(),
+        method: Method::RuntimeList(EmptyParams::default()),
+    };
+    let json = serde_json::to_string(&list).unwrap();
+    assert!(json.contains("\"method\":\"runtime.list\""));
+    let restored: Request = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored, list);
+
+    let add = Request {
+        id: "runtime_add".into(),
+        method: Method::RuntimeAdd(RuntimeAddParams {
+            id: "workbox".into(),
+            kind: crate::runtime::RuntimeKind::RemoteSsh,
+            label: Some("Workbox".into()),
+            target: Some("workbox.example".into()),
+            session: Some("worker".into()),
+        }),
+    };
+    let json = serde_json::to_string(&add).unwrap();
+    assert!(json.contains("\"method\":\"runtime.add\""));
+    assert!(json.contains("\"remote_ssh\""));
+    let restored: Request = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored, add);
+
+    let get = Request {
+        id: "runtime_get".into(),
+        method: Method::RuntimeGet(RuntimeTarget {
+            runtime_id: "workbox".into(),
+        }),
+    };
+    let json = serde_json::to_string(&get).unwrap();
+    assert!(json.contains("\"method\":\"runtime.get\""));
+    let restored: Request = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored, get);
+
+    let remove = Request {
+        id: "runtime_remove".into(),
+        method: Method::RuntimeRemove(RuntimeTarget {
+            runtime_id: "workbox".into(),
+        }),
+    };
+    let json = serde_json::to_string(&remove).unwrap();
+    assert!(json.contains("\"method\":\"runtime.remove\""));
+    let restored: Request = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored, remove);
+
+    let runtime = RuntimeInfo {
+        runtime_id: "workbox".into(),
+        kind: crate::runtime::RuntimeKind::RemoteSsh,
+        label: "Workbox".into(),
+        target: Some("workbox.example".into()),
+        session: Some("worker".into()),
+        status: crate::runtime::RuntimeStatus::Offline,
+        last_error: None,
+    };
+    for response in [
+        SuccessResponse {
+            id: "runtime_list".into(),
+            result: ResponseResult::RuntimeList {
+                runtimes: vec![RuntimeInfo {
+                    runtime_id: "local".into(),
+                    kind: crate::runtime::RuntimeKind::Local,
+                    label: "Local".into(),
+                    target: None,
+                    session: None,
+                    status: crate::runtime::RuntimeStatus::Connected,
+                    last_error: None,
+                }],
+            },
+        },
+        SuccessResponse {
+            id: "runtime_get".into(),
+            result: ResponseResult::RuntimeInfo {
+                runtime: runtime.clone(),
+            },
+        },
+        SuccessResponse {
+            id: "runtime_add".into(),
+            result: ResponseResult::RuntimeAdded {
+                runtime: runtime.clone(),
+            },
+        },
+        SuccessResponse {
+            id: "runtime_remove".into(),
+            result: ResponseResult::RuntimeRemoved {
+                runtime_id: "workbox".into(),
+                removed: true,
+            },
+        },
+    ] {
+        let json = serde_json::to_string(&response).unwrap();
+        let restored: SuccessResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, response);
+    }
+}
+
+#[test]
 fn layout_export_apply_round_trip() {
     let root = LayoutNode::Split {
         direction: SplitDirection::Right,

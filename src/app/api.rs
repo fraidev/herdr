@@ -9,6 +9,7 @@ mod pane_graphics;
 mod panes;
 pub(crate) mod plugins;
 mod responses;
+pub(crate) mod runtimes;
 mod session;
 mod tabs;
 mod workspaces;
@@ -1159,6 +1160,12 @@ impl App {
             }
             Method::PluginPaneClose(params) => {
                 return self.handle_plugin_pane_close(request.id, params);
+            }
+            Method::RuntimeList(_) => return self.handle_runtime_list(request.id),
+            Method::RuntimeGet(target) => return self.handle_runtime_get(request.id, target),
+            Method::RuntimeAdd(params) => return self.handle_runtime_add(request.id, params),
+            Method::RuntimeRemove(target) => {
+                return self.handle_runtime_remove(request.id, target);
             }
             _ => {
                 return responses::encode_error(

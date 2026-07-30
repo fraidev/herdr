@@ -95,6 +95,8 @@ impl PaneClickState {
 pub struct App {
     pub state: AppState,
     pub(crate) terminal_runtimes: crate::terminal::TerminalRuntimeRegistry,
+    /// Hub multi-runtime registry (local always present). Server-owned.
+    pub(crate) runtime_registry: crate::runtime::RuntimeRegistry,
     pub event_tx: mpsc::Sender<AppEvent>,
     pub(crate) event_rx: mpsc::Receiver<AppEvent>,
     pub(crate) api_rx: tokio::sync::mpsc::UnboundedReceiver<crate::api::ApiRequestMessage>,
@@ -239,6 +241,10 @@ fn load_plugin_registry(no_session: bool) -> crate::app::state::InstalledPluginR
         .into_iter()
         .map(|plugin| (plugin.plugin_id.clone(), plugin))
         .collect()
+}
+
+fn load_runtime_registry(no_session: bool) -> crate::runtime::RuntimeRegistry {
+    crate::app::api::runtimes::load_runtime_registry(no_session)
 }
 
 fn agent_panel_sort_from_config(
@@ -731,6 +737,7 @@ impl App {
             last_api_notification_at: None,
             state,
             terminal_runtimes: restored_terminal_runtimes,
+            runtime_registry: load_runtime_registry(no_session),
             event_tx,
             event_rx,
             last_git_remote_status_refresh: Instant::now() - GIT_REMOTE_STATUS_REFRESH_INTERVAL,
@@ -809,6 +816,7 @@ impl App {
 
         app.no_session = false;
         app.state.installed_plugins = load_plugin_registry(app.no_session);
+        app.runtime_registry = load_runtime_registry(app.no_session);
         let now = Instant::now();
         if background_update_check_enabled(app.no_session, app.update_version_check_enabled) {
             app.next_auto_update_check = app

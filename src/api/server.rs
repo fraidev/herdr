@@ -437,6 +437,10 @@ fn api_method_name(method: &Method) -> &'static str {
         Method::PluginPaneOpen(_) => "plugin.pane.open",
         Method::PluginPaneFocus(_) => "plugin.pane.focus",
         Method::PluginPaneClose(_) => "plugin.pane.close",
+        Method::RuntimeList(_) => "runtime.list",
+        Method::RuntimeGet(_) => "runtime.get",
+        Method::RuntimeAdd(_) => "runtime.add",
+        Method::RuntimeRemove(_) => "runtime.remove",
     }
 }
 

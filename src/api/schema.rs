@@ -7,6 +7,7 @@ pub mod integrations;
 pub mod panes;
 pub mod plugins;
 pub mod response;
+pub mod runtimes;
 pub mod server;
 pub mod session;
 pub mod tabs;
@@ -20,6 +21,7 @@ pub use integrations::*;
 pub use panes::*;
 pub use plugins::*;
 pub use response::*;
+pub use runtimes::*;
 pub use server::*;
 pub use session::*;
 pub use tabs::*;
@@ -235,6 +237,14 @@ pub enum Method {
     PluginPaneFocus(PluginPaneFocusParams),
     #[serde(rename = "plugin.pane.close")]
     PluginPaneClose(PluginPaneCloseParams),
+    #[serde(rename = "runtime.list")]
+    RuntimeList(EmptyParams),
+    #[serde(rename = "runtime.get")]
+    RuntimeGet(RuntimeTarget),
+    #[serde(rename = "runtime.add")]
+    RuntimeAdd(RuntimeAddParams),
+    #[serde(rename = "runtime.remove")]
+    RuntimeRemove(RuntimeTarget),
 }
 
 #[cfg(test)]

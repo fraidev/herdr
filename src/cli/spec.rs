@@ -42,7 +42,8 @@ pub(super) fn command() -> Command {
         .subcommand(terminal_command())
         .subcommand(session_command())
         .subcommand(integration_command())
-        .subcommand(plugin_command());
+        .subcommand(plugin_command())
+        .subcommand(runtime_command());
     configure_help(command, true)
 }
 
@@ -186,6 +187,27 @@ fn api_command() -> Command {
                 .arg(json_flag())
                 .arg(path_option("output", "PATH")),
         )
+}
+
+fn runtime_command() -> Command {
+    Command::new("runtime")
+        .about("Manage hub runtime registry entries (local + remote Herdr servers)")
+        .subcommand(Command::new("list").about("List registered runtimes"))
+        .subcommand(id_command("get", "runtime_id", "Show a runtime"))
+        .subcommand(
+            Command::new("add")
+                .about("Register a remote or socket runtime (offline until connect)")
+                .arg(required("id", "ID"))
+                .arg(option("ssh", "HOST").help("SSH host for a remote_ssh runtime"))
+                .arg(path_option("socket", "PATH").help("Unix socket path for a socket runtime"))
+                .arg(option("session", "NAME").help("Remote Herdr session name (with --ssh)"))
+                .arg(option("label", "TEXT").help("Display label")),
+        )
+        .subcommand(id_command(
+            "remove",
+            "runtime_id",
+            "Remove a non-local runtime",
+        ))
 }
 
 fn workspace_command() -> Command {
