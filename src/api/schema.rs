@@ -245,6 +245,10 @@ pub enum Method {
     RuntimeAdd(RuntimeAddParams),
     #[serde(rename = "runtime.remove")]
     RuntimeRemove(RuntimeTarget),
+    #[serde(rename = "runtime.connect")]
+    RuntimeConnect(RuntimeTarget),
+    #[serde(rename = "runtime.disconnect")]
+    RuntimeDisconnect(RuntimeTarget),
 }
 
 #[cfg(test)]

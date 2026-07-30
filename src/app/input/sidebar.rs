@@ -482,10 +482,19 @@ impl AppState {
             && row < rect.y + rect.height
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn agent_detail_target_at(
         &self,
         row: u16,
     ) -> Option<(usize, usize, crate::layout::PaneId)> {
+        let entry = self.agent_detail_entry_at(row)?;
+        if entry.remote_target.is_some() {
+            return None;
+        }
+        Some((entry.ws_idx, entry.tab_idx, entry.pane_id))
+    }
+
+    pub(super) fn agent_detail_entry_at(&self, row: u16) -> Option<crate::ui::AgentPanelEntry> {
         if self.sidebar_collapsed {
             return None;
         }
@@ -510,7 +519,7 @@ impl AppState {
                 break;
             }
             if row >= row_y && row < row_y.saturating_add(height) {
-                return Some((detail.ws_idx, detail.tab_idx, detail.pane_id));
+                return Some(detail.clone());
             }
             row_y = row_y
                 .saturating_add(height)

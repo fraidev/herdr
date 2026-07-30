@@ -259,6 +259,13 @@ pub enum ResponseResult {
         runtime_id: String,
         removed: bool,
     },
+    RuntimeConnected {
+        runtime: RuntimeInfo,
+    },
+    RuntimeDisconnected {
+        runtime_id: String,
+        disconnected: bool,
+    },
     Ok {},
 }
 

@@ -175,6 +175,9 @@ mod tests {
             last_agent_state_change_seq: None,
             state_labels: std::collections::HashMap::new(),
             tokens: std::collections::HashMap::new(),
+            runtime_id: crate::runtime::LOCAL_RUNTIME_ID.to_string(),
+            runtime_label: None,
+            remote_target: None,
         }
     }
 

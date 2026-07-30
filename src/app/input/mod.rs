@@ -361,6 +361,16 @@ impl App {
                     MouseAction::FocusPane { ws_idx, pane_id } => {
                         self.focus_pane_internal_via_api(ws_idx, pane_id)
                     }
+                    MouseAction::FocusRemoteAgent { target } => {
+                        // MVP: proxy agent.focus to the remote runtime. Full stream
+                        // attach / embedded multi-pane chrome is a later slice.
+                        let _ = self.handle_api_request(crate::api::schema::Request {
+                            id: "tui:remote-agent-focus".into(),
+                            method: crate::api::schema::Method::AgentFocus(
+                                crate::api::schema::AgentTarget { target },
+                            ),
+                        });
+                    }
                     MouseAction::FocusToastTarget => self.focus_toast_target_via_api(),
                     MouseAction::MoveWorkspace {
                         source_ws_idx,

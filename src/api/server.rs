@@ -441,6 +441,8 @@ fn api_method_name(method: &Method) -> &'static str {
         Method::RuntimeGet(_) => "runtime.get",
         Method::RuntimeAdd(_) => "runtime.add",
         Method::RuntimeRemove(_) => "runtime.remove",
+        Method::RuntimeConnect(_) => "runtime.connect",
+        Method::RuntimeDisconnect(_) => "runtime.disconnect",
     }
 }
 

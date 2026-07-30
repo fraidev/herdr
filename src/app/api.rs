@@ -1167,6 +1167,12 @@ impl App {
             Method::RuntimeRemove(target) => {
                 return self.handle_runtime_remove(request.id, target);
             }
+            Method::RuntimeConnect(target) => {
+                return self.handle_runtime_connect(request.id, target);
+            }
+            Method::RuntimeDisconnect(target) => {
+                return self.handle_runtime_disconnect(request.id, target);
+            }
             _ => {
                 return responses::encode_error(
                     request.id,

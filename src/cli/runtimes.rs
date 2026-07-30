@@ -12,6 +12,8 @@ pub(super) fn run_runtime_command(args: &[String]) -> std::io::Result<i32> {
         "get" => runtime_get(&args[1..]),
         "add" => runtime_add(&args[1..]),
         "remove" | "rm" => runtime_remove(&args[1..]),
+        "connect" => runtime_connect(&args[1..]),
+        "disconnect" => runtime_disconnect(&args[1..]),
         "help" | "--help" | "-h" => {
             print_runtime_help();
             Ok(0)
@@ -56,6 +58,30 @@ fn runtime_remove(args: &[String]) -> std::io::Result<i32> {
     }
 
     super::runtime::runtime_remove(runtime_id.clone())
+}
+
+fn runtime_connect(args: &[String]) -> std::io::Result<i32> {
+    let Some(runtime_id) = args.first() else {
+        eprintln!("usage: herdr runtime connect <runtime_id>");
+        return Ok(2);
+    };
+    if args.len() != 1 {
+        eprintln!("usage: herdr runtime connect <runtime_id>");
+        return Ok(2);
+    }
+    super::runtime::runtime_connect(runtime_id.clone())
+}
+
+fn runtime_disconnect(args: &[String]) -> std::io::Result<i32> {
+    let Some(runtime_id) = args.first() else {
+        eprintln!("usage: herdr runtime disconnect <runtime_id>");
+        return Ok(2);
+    };
+    if args.len() != 1 {
+        eprintln!("usage: herdr runtime disconnect <runtime_id>");
+        return Ok(2);
+    }
+    super::runtime::runtime_disconnect(runtime_id.clone())
 }
 
 fn runtime_add(args: &[String]) -> std::io::Result<i32> {
@@ -149,5 +175,7 @@ fn print_runtime_help() {
     eprintln!(
         "  herdr runtime add <id> (--ssh HOST | --socket PATH) [--session NAME] [--label TEXT]"
     );
+    eprintln!("  herdr runtime connect <runtime_id>");
+    eprintln!("  herdr runtime disconnect <runtime_id>");
     eprintln!("  herdr runtime remove <runtime_id>");
 }

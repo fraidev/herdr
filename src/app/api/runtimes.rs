@@ -1,7 +1,10 @@
 use super::responses::{encode_error, encode_success};
 use crate::api::schema::{ResponseResult, RuntimeAddParams, RuntimeInfo, RuntimeTarget};
 use crate::app::App;
-use crate::runtime::{parse_runtime_id, RuntimeEntry, RuntimeKind, RuntimeRegistry, RuntimeStatus};
+use crate::runtime::{
+    connected_status, offline_status, parse_runtime_id, RuntimeEntry, RuntimeKind, RuntimeRegistry,
+    RuntimeStatus,
+};
 
 impl App {
     pub(super) fn handle_runtime_list(&mut self, id: String) -> String {
@@ -12,6 +15,139 @@ impl App {
             .map(RuntimeInfo::from)
             .collect();
         encode_success(id, ResponseResult::RuntimeList { runtimes })
+    }
+
+    pub(super) fn handle_runtime_connect(&mut self, id: String, target: RuntimeTarget) -> String {
+        if target.runtime_id == crate::runtime::LOCAL_RUNTIME_ID {
+            return encode_error(id, "invalid_runtime", "local runtime is always connected");
+        }
+        let Some(entry) = self.runtime_registry.get(&target.runtime_id).cloned() else {
+            return runtime_not_found(id, &target.runtime_id);
+        };
+
+        let _ =
+            self.runtime_registry
+                .set_status(&target.runtime_id, RuntimeStatus::Connecting, None);
+
+        match self.runtime_connections.connect(&entry) {
+            Ok(_) => {
+                let (status, err) = connected_status();
+                let _ = self
+                    .runtime_registry
+                    .set_status(&target.runtime_id, status, err);
+                // Refresh remote inventory snapshot.
+                if let Err(err) = self.refresh_remote_inventory(&target.runtime_id) {
+                    let (status, last_error) = crate::runtime::degraded_status(err);
+                    let _ =
+                        self.runtime_registry
+                            .set_status(&target.runtime_id, status, last_error);
+                }
+                match self.runtime_registry.get(&target.runtime_id) {
+                    Some(entry) => encode_success(
+                        id,
+                        ResponseResult::RuntimeConnected {
+                            runtime: RuntimeInfo::from(entry),
+                        },
+                    ),
+                    None => runtime_not_found(id, &target.runtime_id),
+                }
+            }
+            Err(message) => {
+                let (status, last_error) = offline_status(message.clone());
+                let _ = self
+                    .runtime_registry
+                    .set_status(&target.runtime_id, status, last_error);
+                self.remote_agent_cache.remove(&target.runtime_id);
+                encode_error(id, "runtime_connect_failed", message)
+            }
+        }
+    }
+
+    pub(super) fn handle_runtime_disconnect(
+        &mut self,
+        id: String,
+        target: RuntimeTarget,
+    ) -> String {
+        if target.runtime_id == crate::runtime::LOCAL_RUNTIME_ID {
+            return encode_error(id, "invalid_runtime", "cannot disconnect the local runtime");
+        }
+        if !self.runtime_registry.contains(&target.runtime_id) {
+            return runtime_not_found(id, &target.runtime_id);
+        }
+        let removed = self.runtime_connections.disconnect(&target.runtime_id);
+        self.remote_agent_cache.remove(&target.runtime_id);
+        let _ = self
+            .runtime_registry
+            .set_status(&target.runtime_id, RuntimeStatus::Offline, None);
+        encode_success(
+            id,
+            ResponseResult::RuntimeDisconnected {
+                runtime_id: target.runtime_id,
+                disconnected: removed,
+            },
+        )
+    }
+
+    pub(crate) fn refresh_remote_inventory(&mut self, runtime_id: &str) -> Result<(), String> {
+        let entry = self
+            .runtime_registry
+            .get(runtime_id)
+            .cloned()
+            .ok_or_else(|| format!("runtime '{runtime_id}' not found"))?;
+        let connection = self
+            .runtime_connections
+            .get(runtime_id)
+            .ok_or_else(|| format!("runtime '{runtime_id}' is not connected"))?;
+        let agents = crate::runtime::fetch_remote_agents(connection, &entry)?;
+        self.remote_agent_cache
+            .insert(runtime_id.to_string(), agents);
+        Ok(())
+    }
+
+    pub(crate) fn collect_aggregated_agent_infos(&mut self) -> Vec<crate::api::schema::AgentInfo> {
+        let local = self.collect_agent_infos();
+        let remote_ids: Vec<String> = self
+            .runtime_registry
+            .list()
+            .iter()
+            .filter(|entry| !entry.id.is_local())
+            .filter(|entry| self.runtime_connections.is_connected(entry.id.as_str()))
+            .map(|entry| entry.id.as_str().to_string())
+            .collect();
+
+        let mut remotes = Vec::new();
+        for runtime_id in remote_ids {
+            match self.refresh_remote_inventory(&runtime_id) {
+                Ok(()) => {
+                    if let Some(agents) = self.remote_agent_cache.get(&runtime_id) {
+                        remotes.push(agents.clone());
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        runtime_id = %runtime_id,
+                        error = %err,
+                        "failed to refresh remote agent inventory"
+                    );
+                    let (status, last_error) = crate::runtime::degraded_status(err);
+                    let _ = self
+                        .runtime_registry
+                        .set_status(&runtime_id, status, last_error);
+                    // Keep last good snapshot if any.
+                    if let Some(agents) = self.remote_agent_cache.get(&runtime_id) {
+                        remotes.push(agents.clone());
+                    }
+                }
+            }
+        }
+        let merged = crate::runtime::merge_agent_lists(local, remotes);
+        // Project non-local rows into AppState for sidebar rendering.
+        self.state.hub_remote_agents = merged
+            .iter()
+            .filter(|agent| agent.runtime_id != crate::runtime::LOCAL_RUNTIME_ID)
+            .cloned()
+            .collect();
+        merged
     }
 
     pub(super) fn handle_runtime_get(&mut self, id: String, target: RuntimeTarget) -> String {
@@ -98,6 +234,9 @@ impl App {
             return runtime_not_found(id, &target.runtime_id);
         }
 
+        // Disconnect before remove so bridges are torn down.
+        let _ = self.runtime_connections.disconnect(&target.runtime_id);
+        self.remote_agent_cache.remove(&target.runtime_id);
         match self.runtime_registry.remove(&target.runtime_id) {
             Ok(entry) => {
                 if let Err(err) = self.persist_runtime_registry() {

@@ -220,6 +220,16 @@ pub struct AgentInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foreground_cwd: Option<String>,
     pub revision: u64,
+    /// Hub runtime that owns this agent. Defaults to `"local"` for single-host installs.
+    #[serde(default = "default_local_runtime_id")]
+    pub runtime_id: String,
+    /// Display label for a non-local hub runtime (host name).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_label: Option<String>,
+}
+
+fn default_local_runtime_id() -> String {
+    crate::runtime::LOCAL_RUNTIME_ID.to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -97,6 +97,11 @@ pub struct App {
     pub(crate) terminal_runtimes: crate::terminal::TerminalRuntimeRegistry,
     /// Hub multi-runtime registry (local always present). Server-owned.
     pub(crate) runtime_registry: crate::runtime::RuntimeRegistry,
+    /// Live API tunnels to connected non-local runtimes.
+    pub(crate) runtime_connections: crate::runtime::RuntimeConnections,
+    /// Last successful remote agent inventory snapshots (scoped).
+    pub(crate) remote_agent_cache:
+        std::collections::HashMap<String, Vec<crate::api::schema::AgentInfo>>,
     pub event_tx: mpsc::Sender<AppEvent>,
     pub(crate) event_rx: mpsc::Receiver<AppEvent>,
     pub(crate) api_rx: tokio::sync::mpsc::UnboundedReceiver<crate::api::ApiRequestMessage>,
@@ -681,6 +686,7 @@ impl App {
             agent_manifest_update_status: crate::detect::manifest_update::load_status(),
             integration_install_messages: Vec::new(),
             installed_plugins: load_plugin_registry(no_session),
+            hub_remote_agents: Vec::new(),
             plugin_panes: std::collections::HashMap::new(),
             pane_graphics_layers: std::collections::HashMap::new(),
             pane_graphics_streams: std::collections::HashMap::new(),
@@ -738,6 +744,8 @@ impl App {
             state,
             terminal_runtimes: restored_terminal_runtimes,
             runtime_registry: load_runtime_registry(no_session),
+            runtime_connections: crate::runtime::RuntimeConnections::new(),
+            remote_agent_cache: std::collections::HashMap::new(),
             event_tx,
             event_rx,
             last_git_remote_status_refresh: Instant::now() - GIT_REMOTE_STATUS_REFRESH_INTERVAL,

@@ -208,6 +208,16 @@ fn runtime_command() -> Command {
             "runtime_id",
             "Remove a non-local runtime",
         ))
+        .subcommand(id_command(
+            "connect",
+            "runtime_id",
+            "Connect to a registered runtime (socket or SSH API bridge)",
+        ))
+        .subcommand(id_command(
+            "disconnect",
+            "runtime_id",
+            "Disconnect a connected runtime",
+        ))
 }
 
 fn workspace_command() -> Command {

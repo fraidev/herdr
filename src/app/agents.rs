@@ -392,6 +392,8 @@ impl App {
             cwd: pane.cwd,
             foreground_cwd: pane.foreground_cwd,
             revision: pane.revision,
+            runtime_id: crate::runtime::LOCAL_RUNTIME_ID.to_string(),
+            runtime_label: None,
         })
     }
 

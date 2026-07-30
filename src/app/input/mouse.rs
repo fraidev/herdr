@@ -38,6 +38,10 @@ pub(super) enum MouseAction {
         ws_idx: usize,
         pane_id: crate::layout::PaneId,
     },
+    /// Focus a remote federated agent (hub proxies agent.focus).
+    FocusRemoteAgent {
+        target: String,
+    },
     FocusToastTarget,
     MoveWorkspace {
         source_ws_idx: usize,
@@ -615,11 +619,15 @@ impl AppState {
                         return None;
                     }
 
-                    if let Some((ws_idx, _tab_idx, pane_id)) =
-                        self.agent_detail_target_at(mouse.row)
-                    {
+                    if let Some(entry) = self.agent_detail_entry_at(mouse.row) {
                         self.mode = Mode::Terminal;
-                        return Some(MouseAction::FocusPane { ws_idx, pane_id });
+                        if let Some(target) = entry.remote_target {
+                            return Some(MouseAction::FocusRemoteAgent { target });
+                        }
+                        return Some(MouseAction::FocusPane {
+                            ws_idx: entry.ws_idx,
+                            pane_id: entry.pane_id,
+                        });
                     }
                 } else if let Some(info) = self.pane_at(mouse.column, mouse.row).cloned() {
                     if self.mode != Mode::Terminal {

@@ -38,6 +38,20 @@ pub(super) fn runtime_remove(runtime_id: String) -> std::io::Result<i32> {
     )
 }
 
+pub(super) fn runtime_connect(runtime_id: String) -> std::io::Result<i32> {
+    print_method_response(
+        "cli:runtime:connect",
+        Method::RuntimeConnect(crate::api::schema::RuntimeTarget { runtime_id }),
+    )
+}
+
+pub(super) fn runtime_disconnect(runtime_id: String) -> std::io::Result<i32> {
+    print_method_response(
+        "cli:runtime:disconnect",
+        Method::RuntimeDisconnect(crate::api::schema::RuntimeTarget { runtime_id }),
+    )
+}
+
 pub(super) fn workspace_list() -> std::io::Result<i32> {
     print_method_response(
         "cli:workspace:list",

@@ -5939,6 +5939,38 @@
             "params"
           ],
           "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "runtime.connect",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/RuntimeTarget"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "runtime.disconnect",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/RuntimeTarget"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
         }
       ],
       "properties": {
@@ -6228,6 +6260,18 @@
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
+            },
+            "runtime_id": {
+              "default": "local",
+              "description": "Hub runtime that owns this agent. Defaults to `\"local\"` for single-host installs.",
+              "type": "string"
+            },
+            "runtime_label": {
+              "description": "Display label for a non-local hub runtime (host name).",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "screen_detection_skipped": {
               "type": "boolean"
@@ -9827,6 +9871,42 @@
                 "type",
                 "runtime_id",
                 "removed"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "runtime": {
+                  "$ref": "#/schemas/success_response/$defs/RuntimeInfo"
+                },
+                "type": {
+                  "const": "runtime_connected",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "runtime"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "disconnected": {
+                  "type": "boolean"
+                },
+                "runtime_id": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "runtime_disconnected",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "runtime_id",
+                "disconnected"
               ],
               "type": "object"
             },

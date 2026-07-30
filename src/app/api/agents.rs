@@ -17,12 +17,15 @@ impl App {
         encode_success(
             id,
             ResponseResult::AgentList {
-                agents: self.collect_agent_infos(),
+                agents: self.collect_aggregated_agent_infos(),
             },
         )
     }
 
     pub(super) fn handle_agent_get(&mut self, id: String, target: AgentTarget) -> String {
+        if let Some(response) = self.try_proxy_remote_agent_get(&id, &target.target) {
+            return response;
+        }
         self.reconcile_managed_agent_target(&target.target);
         let agent = match self.agent_info_for_target(&target.target) {
             Ok(agent) => agent,
@@ -33,6 +36,9 @@ impl App {
     }
 
     pub(super) fn handle_agent_focus(&mut self, id: String, target: AgentTarget) -> String {
+        if let Some(response) = self.try_proxy_remote_agent_focus(&id, &target.target) {
+            return response;
+        }
         let agent = match self.focus_agent_target(&target.target) {
             Ok(agent) => agent,
             Err(err) => return encode_error_body(id, self.agent_target_error_body(err)),
@@ -62,6 +68,9 @@ impl App {
     pub(super) fn handle_agent_prompt(&mut self, id: String, params: AgentPromptParams) -> String {
         if params.text.is_empty() {
             return encode_error(id, "empty_agent_prompt", "agent prompt must not be empty");
+        }
+        if let Some(response) = self.try_proxy_remote_agent_prompt(&id, &params) {
+            return response;
         }
         let resolved = match self.resolve_agent_target(&params.target) {
             Ok(resolved) => resolved,
@@ -227,6 +236,9 @@ impl App {
         id: String,
         params: AgentSendKeysParams,
     ) -> String {
+        if let Some(response) = self.try_proxy_remote_agent_send_keys(&id, &params) {
+            return response;
+        }
         let resolved = match self.resolve_agent_target(&params.target) {
             Ok(resolved) => resolved,
             Err(err) => return encode_error_body(id, self.agent_target_error_body(err)),
@@ -266,6 +278,187 @@ impl App {
 
         encode_success(id, ResponseResult::Ok {})
     }
+
+    /// If `target` is a remote-scoped id (`runtime/local_target`) for a known
+    /// non-local runtime, proxy `agent.get` to that runtime. Returns `None` for
+    /// local / unknown targets so the normal local path runs.
+    fn try_proxy_remote_agent_get(&mut self, id: &str, target: &str) -> Option<String> {
+        let (runtime_id, local_target) = split_remote_agent_target(self, target)?;
+        let response = proxy_agent_request(
+            self,
+            &runtime_id,
+            crate::api::schema::Request {
+                id: format!("proxy:{id}:agent.get"),
+                method: crate::api::schema::Method::AgentGet(crate::api::schema::AgentTarget {
+                    target: local_target,
+                }),
+            },
+        );
+        Some(rewrite_proxied_agent_response(id, &runtime_id, response))
+    }
+
+    fn try_proxy_remote_agent_focus(&mut self, id: &str, target: &str) -> Option<String> {
+        let (runtime_id, local_target) = split_remote_agent_target(self, target)?;
+        let response = proxy_agent_request(
+            self,
+            &runtime_id,
+            crate::api::schema::Request {
+                id: format!("proxy:{id}:agent.focus"),
+                method: crate::api::schema::Method::AgentFocus(crate::api::schema::AgentTarget {
+                    target: local_target,
+                }),
+            },
+        );
+        Some(rewrite_proxied_agent_response(id, &runtime_id, response))
+    }
+
+    fn try_proxy_remote_agent_prompt(
+        &mut self,
+        id: &str,
+        params: &AgentPromptParams,
+    ) -> Option<String> {
+        let (runtime_id, local_target) = split_remote_agent_target(self, &params.target)?;
+        let mut remote_params = params.clone();
+        remote_params.target = local_target;
+        let response = proxy_agent_request(
+            self,
+            &runtime_id,
+            crate::api::schema::Request {
+                id: format!("proxy:{id}:agent.prompt"),
+                method: crate::api::schema::Method::AgentPrompt(remote_params),
+            },
+        );
+        Some(rewrite_proxied_agent_response(id, &runtime_id, response))
+    }
+
+    fn try_proxy_remote_agent_send_keys(
+        &mut self,
+        id: &str,
+        params: &AgentSendKeysParams,
+    ) -> Option<String> {
+        let (runtime_id, local_target) = split_remote_agent_target(self, &params.target)?;
+        let mut remote_params = params.clone();
+        remote_params.target = local_target;
+        let response = proxy_agent_request(
+            self,
+            &runtime_id,
+            crate::api::schema::Request {
+                id: format!("proxy:{id}:agent.send_keys"),
+                method: crate::api::schema::Method::AgentSendKeys(remote_params),
+            },
+        );
+        // send_keys returns Ok {}; no agent rewrite needed beyond id.
+        match response {
+            Ok(success) => {
+                let mut success = success;
+                success.id = id.to_string();
+                Some(serde_json::to_string(&success).unwrap_or_else(|_| {
+                    encode_error(
+                        id.to_string(),
+                        "proxy_encode_failed",
+                        "failed to encode response",
+                    )
+                }))
+            }
+            Err(message) => Some(encode_error(
+                id.to_string(),
+                "runtime_proxy_failed",
+                message,
+            )),
+        }
+    }
+}
+
+/// Split `runtime_id/local_target` when `runtime_id` is a registered non-local runtime.
+fn split_remote_agent_target(app: &App, target: &str) -> Option<(String, String)> {
+    let (runtime_id, rest) = crate::runtime::unscope_target(target)?;
+    if runtime_id.is_local() {
+        return None;
+    }
+    if !app.runtime_registry.contains(runtime_id.as_str()) {
+        return None;
+    }
+    Some((runtime_id.as_str().to_string(), rest.to_string()))
+}
+
+fn proxy_agent_request(
+    app: &App,
+    runtime_id: &str,
+    request: crate::api::schema::Request,
+) -> Result<crate::api::schema::SuccessResponse, String> {
+    let connection = app
+        .runtime_connections
+        .get(runtime_id)
+        .ok_or_else(|| format!("runtime '{runtime_id}' is not connected"))?;
+    connection.request(request)
+}
+
+fn rewrite_proxied_agent_response(
+    id: &str,
+    runtime_id: &str,
+    response: Result<crate::api::schema::SuccessResponse, String>,
+) -> String {
+    match response {
+        Ok(mut success) => {
+            success.id = id.to_string();
+            success.result = match success.result {
+                ResponseResult::AgentInfo { agent } => ResponseResult::AgentInfo {
+                    agent: annotate_one(agent, runtime_id),
+                },
+                ResponseResult::AgentPrompted { agent } => ResponseResult::AgentPrompted {
+                    agent: annotate_one(agent, runtime_id),
+                },
+                ResponseResult::AgentStarted { agent, argv } => ResponseResult::AgentStarted {
+                    agent: annotate_one(agent, runtime_id),
+                    argv,
+                },
+                other => other,
+            };
+            serde_json::to_string(&success).unwrap_or_else(|_| {
+                encode_error(
+                    id.to_string(),
+                    "proxy_encode_failed",
+                    "failed to encode response",
+                )
+            })
+        }
+        Err(message) => encode_error(id.to_string(), "runtime_proxy_failed", message),
+    }
+}
+
+fn annotate_one(
+    agent: crate::api::schema::AgentInfo,
+    runtime_id: &str,
+) -> crate::api::schema::AgentInfo {
+    let mut agents = crate::runtime::annotate_agents(vec![agent], runtime_id, None);
+    agents
+        .pop()
+        .unwrap_or_else(|| crate::api::schema::AgentInfo {
+            terminal_id: String::new(),
+            name: None,
+            agent: None,
+            title: None,
+            terminal_title: None,
+            terminal_title_stripped: None,
+            display_agent: None,
+            agent_status: crate::api::schema::AgentStatus::Unknown,
+            screen_detection_skipped: false,
+            state_labels: Default::default(),
+            tokens: Default::default(),
+            agent_session: None,
+            workspace_id: String::new(),
+            tab_id: String::new(),
+            pane_id: String::new(),
+            focused: false,
+            launch_pending: false,
+            interactive_ready: false,
+            state_change_seq: 0,
+            cwd: None,
+            foreground_cwd: None,
+            revision: 0,
+            runtime_id: runtime_id.to_string(),
+            runtime_label: None,
+        })
 }
 
 fn agent_not_ready(id: String, target: &str) -> String {

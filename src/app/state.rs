@@ -1573,6 +1573,9 @@ pub struct AppState {
     pub integration_install_messages: Vec<String>,
     /// Installed or linked plugins known to this running Herdr instance.
     pub(crate) installed_plugins: InstalledPluginRegistry,
+    /// Mirrored remote agents from hub federation (server projection for sidebar).
+    /// Local agents stay in workspaces/terminals; this only holds non-local rows.
+    pub(crate) hub_remote_agents: Vec<crate::api::schema::AgentInfo>,
     /// Pane ids opened through the plugin pane API.
     pub(crate) plugin_panes: std::collections::HashMap<PaneId, PluginPaneRecord>,
     /// Runtime image layers owned by API clients and composited over panes.
@@ -1942,6 +1945,7 @@ impl AppState {
                 crate::detect::manifest_update::ManifestUpdateStatus::default(),
             integration_install_messages: Vec::new(),
             installed_plugins: std::collections::HashMap::new(),
+            hub_remote_agents: Vec::new(),
             plugin_panes: std::collections::HashMap::new(),
             pane_graphics_layers: std::collections::HashMap::new(),
             pane_graphics_streams: std::collections::HashMap::new(),

@@ -4,15 +4,19 @@
 //! this module tracks membership and live status only. It does not merge PTYs
 //! or remote AppState.
 
+mod connect;
 mod ids;
+mod inventory;
 mod persist;
 
-// ID helpers are exercised by unit tests today; inventory merge (PR3+) will use them
-// from other crates modules via `crate::runtime::`.
+pub use connect::{
+    connected_status, degraded_status, offline_status, run_remote_api_bridge, RuntimeConnections,
+};
 #[allow(unused_imports)]
 pub use ids::{
     is_scoped_remote_target, parse_runtime_id, scope_target, unscope_target, validate_runtime_id,
 };
+pub use inventory::{annotate_agents, fetch_remote_agents, merge_agent_lists};
 #[allow(unused_imports)]
 pub use persist::{
     load_membership, load_membership_strict, registry_path, registry_path_for_data_dir,
@@ -171,7 +175,6 @@ impl RuntimeRegistry {
         self.entries.iter().find(|entry| entry.id.as_str() == id)
     }
 
-    #[allow(dead_code)] // connection health updates land in PR2+
     pub fn get_mut(&mut self, id: &str) -> Option<&mut RuntimeEntry> {
         self.entries
             .iter_mut()
@@ -234,7 +237,6 @@ impl RuntimeRegistry {
         membership
     }
 
-    #[allow(dead_code)] // connection health updates land in PR2+
     pub fn set_status(
         &mut self,
         id: &str,

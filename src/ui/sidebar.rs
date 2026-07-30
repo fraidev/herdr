@@ -20,6 +20,7 @@ use crate::terminal::TerminalRuntimeRegistry;
 const WORKSPACE_SECTION_HEADER_ROWS: u16 = 2;
 const AGENT_PANEL_HEADER_ROWS: u16 = 3;
 
+#[derive(Clone)]
 pub(crate) struct AgentPanelEntry {
     pub ws_idx: usize,
     pub tab_idx: usize,
@@ -37,6 +38,14 @@ pub(crate) struct AgentPanelEntry {
     pub last_agent_state_change_seq: Option<u64>,
     pub state_labels: std::collections::HashMap<String, String>,
     pub tokens: std::collections::HashMap<String, String>,
+    /// Hub runtime id (`local` or remote registry id).
+    #[allow(dead_code)]
+    pub runtime_id: String,
+    /// Host label for non-local agents.
+    #[allow(dead_code)]
+    pub runtime_label: Option<String>,
+    /// Remote agents use a sentinel pane identity; focus goes through control proxy.
+    pub remote_target: Option<String>,
 }
 
 fn sidebar_section_heights(total_h: u16, split_ratio: f32) -> (u16, u16) {
@@ -133,6 +142,65 @@ fn agent_panel_entries_with_runtimes(
     entries
 }
 
+/// Append mirrored remote agents from hub inventory cache into the agents panel.
+///
+/// Remote rows use host labels in `primary_label` / `runtime_label` and set
+/// `remote_target` so focus can proxy through the hub API. Spaces list stays
+/// local-only in v1.
+pub(crate) fn append_remote_agent_panel_entries(
+    entries: &mut Vec<AgentPanelEntry>,
+    remote_agents: &[crate::api::schema::AgentInfo],
+) {
+    for agent in remote_agents {
+        if agent.runtime_id == crate::runtime::LOCAL_RUNTIME_ID {
+            continue;
+        }
+        let host = agent
+            .runtime_label
+            .clone()
+            .unwrap_or_else(|| agent.runtime_id.clone());
+        let label = agent
+            .name
+            .clone()
+            .or_else(|| agent.display_agent.clone())
+            .or_else(|| agent.agent.clone())
+            .unwrap_or_else(|| agent.pane_id.clone());
+        let state = match agent.agent_status {
+            crate::api::schema::AgentStatus::Idle => AgentState::Idle,
+            crate::api::schema::AgentStatus::Working => AgentState::Working,
+            crate::api::schema::AgentStatus::Blocked => AgentState::Blocked,
+            crate::api::schema::AgentStatus::Done => AgentState::Idle,
+            crate::api::schema::AgentStatus::Unknown => AgentState::Unknown,
+        };
+        let target = agent.name.clone().unwrap_or_else(|| agent.pane_id.clone());
+        entries.push(AgentPanelEntry {
+            // Sentinel indices: not a local workspace row.
+            ws_idx: usize::MAX,
+            tab_idx: 0,
+            pane_id: crate::layout::PaneId::from_raw(0),
+            primary_label: host.clone(),
+            primary_tab_label: None,
+            pane_label: None,
+            terminal_title: agent.terminal_title.clone(),
+            terminal_title_stripped: agent.terminal_title_stripped.clone(),
+            agent_label: Some(label),
+            agent_kind_label: agent.agent.clone(),
+            agent: agent
+                .agent
+                .as_deref()
+                .and_then(crate::detect::parse_agent_label),
+            state,
+            seen: true,
+            last_agent_state_change_seq: Some(agent.state_change_seq),
+            state_labels: agent.state_labels.clone(),
+            tokens: agent.tokens.clone(),
+            runtime_id: agent.runtime_id.clone(),
+            runtime_label: Some(host),
+            remote_target: Some(target),
+        });
+    }
+}
+
 fn collect_agent_panel_entries_with_runtimes(
     app: &AppState,
     terminal_runtimes: Option<&TerminalRuntimeRegistry>,
@@ -146,7 +214,8 @@ fn collect_agent_panel_entries_with_runtimes(
         }
     };
 
-    app.workspaces
+    let mut entries: Vec<AgentPanelEntry> = app
+        .workspaces
         .iter()
         .enumerate()
         .flat_map(|(ws_idx, ws)| {
@@ -177,10 +246,15 @@ fn collect_agent_panel_entries_with_runtimes(
                         last_agent_state_change_seq: detail.last_agent_state_change_seq,
                         state_labels: detail.state_labels,
                         tokens: detail.tokens,
+                        runtime_id: crate::runtime::LOCAL_RUNTIME_ID.to_string(),
+                        runtime_label: None,
+                        remote_target: None,
                     }
                 })
         })
-        .collect()
+        .collect();
+    append_remote_agent_panel_entries(&mut entries, &app.hub_remote_agents);
+    entries
 }
 
 pub(super) fn agent_panel_status_key(state: AgentState, seen: bool) -> &'static str {
