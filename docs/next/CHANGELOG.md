@@ -6,6 +6,7 @@
 - Custom themes can now define separate light and dark color overrides when automatic theme switching is enabled. (#837, thanks @aneym)
 
 ### Fixed
+- Prefix-mode keybindings can use Escape as the RHS key (for example `copy_mode = "prefix+esc"`, matching tmux `bind Escape copy-mode`). Unbound Escape still cancels prefix mode.
 - Claude Code integration hooks now ignore Cursor CLI's Claude-compatible session events, preventing Cursor sessions from being stored as resumable Claude sessions. (#2832)
 - Running named servers now activate remote agent-detection manifests downloaded by another server, preventing stale agent states and `agent explain` output until restart. (#2711)
 - New lifecycle event subscriptions now stream only events emitted after subscription begins instead of replaying retained history. (#1270)
