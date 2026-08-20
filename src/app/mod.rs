@@ -3159,4 +3159,1417 @@ mod tests {
             "Working→Idle should still apply after temporary queue pressure"
         );
     }
+
+    #[test]
+    fn route_client_input_dispatches_navigate_mode_keybinds() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+
+        // Start in navigate mode.
+        app.state.mode = Mode::Navigate;
+
+        // Send Ctrl+B then Esc (prefix → leave navigate mode).
+        // Ctrl+B is 0x02 in raw terminal input.
+        // After entering navigate mode and pressing Esc, we should leave navigate mode.
+        let esc_bytes = vec![0x1b]; // Esc
+        app.route_client_input(esc_bytes);
+        // Esc in navigate mode should leave navigate mode.
+        assert_eq!(
+            app.state.mode,
+            Mode::Terminal,
+            "Esc should leave navigate mode and return to Terminal mode"
+        );
+    }
+
+    #[test]
+    fn explicit_text_commit_does_not_trigger_navigate_binding() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.detach_exits = false;
+        app.state.mode = Mode::Navigate;
+
+        app.route_client_events(
+            vec![crate::raw_input::RawInputEvent::Text(
+                crate::input::TextCommit::new("q"),
+            )],
+            false,
+        );
+
+        assert!(!app.state.detach_requested);
+        assert_eq!(app.state.mode, Mode::Navigate);
+        assert!(app.input_leases.is_empty());
+    }
+
+    #[test]
+    fn route_client_input_q_detaches_in_persistence_mode() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.detach_exits = false;
+
+        // Start in navigate mode.
+        app.state.mode = Mode::Navigate;
+        assert!(!app.state.detach_requested);
+
+        let q_bytes = b"q".to_vec();
+        app.route_client_input(q_bytes);
+
+        assert!(
+            app.state.detach_requested,
+            "q should detach in persistence mode"
+        );
+        assert_eq!(
+            app.state.mode,
+            Mode::Terminal,
+            "q should leave navigate mode"
+        );
+    }
+
+    #[test]
+    fn route_client_input_prefix_then_q_detaches_in_persistence_mode() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.detach_exits = false;
+
+        // Start in terminal mode (default after workspace creation).
+        app.state.mode = Mode::Terminal;
+        assert!(!app.state.detach_requested);
+
+        // Send Ctrl+B (prefix key, raw byte 0x02).
+        let prefix_bytes = vec![0x02];
+        app.route_client_input(prefix_bytes);
+
+        assert_eq!(
+            app.state.mode,
+            Mode::Prefix,
+            "prefix key should enter prefix mode"
+        );
+        assert!(
+            !app.state.detach_requested,
+            "prefix key should not set detach flag"
+        );
+
+        let q_bytes = b"q".to_vec();
+        app.route_client_input(q_bytes);
+
+        assert!(
+            app.state.detach_requested,
+            "q should detach in persistence mode"
+        );
+        assert_eq!(
+            app.state.mode,
+            Mode::Terminal,
+            "q should leave navigate mode"
+        );
+    }
+
+    #[test]
+    fn route_client_input_prefix_tab_dispatches_global_last_pane() {
+        let config: Config = toml::from_str(
+            r#"
+[keys]
+last_pane = "prefix+tab"
+"#,
+        )
+        .unwrap();
+        let mut app = test_app();
+        let mut first = Workspace::test_new("one");
+        let first_second_tab = first.test_add_tab(Some("logs"));
+        let first_second_root = first.tabs[first_second_tab].root_pane;
+        let second = Workspace::test_new("two");
+        let second_root = second.tabs[0].root_pane;
+        app.state.workspaces = vec![first, second];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.keybinds = config.keybinds();
+        app.state.mode = Mode::Terminal;
+        app.state.switch_workspace_tab(0, first_second_tab);
+        app.state.switch_workspace_tab(1, 0);
+
+        app.route_client_input(vec![0x02, b'\t']);
+
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert_eq!(app.state.active, Some(0));
+        assert_eq!(app.state.workspaces[0].active_tab, first_second_tab);
+        assert_eq!(
+            app.state.workspaces[0].focused_pane_id(),
+            Some(first_second_root)
+        );
+
+        app.route_client_input(vec![0x02, b'\t']);
+
+        assert_eq!(app.state.active, Some(1));
+        assert_eq!(app.state.workspaces[1].focused_pane_id(), Some(second_root));
+    }
+
+    #[test]
+    fn route_client_input_prefix_tab_dispatches_with_kitty_associated_control_text() {
+        let config: Config = toml::from_str(
+            r#"
+[keys]
+next_tab = "prefix+tab"
+previous_tab = "prefix+shift+tab"
+"#,
+        )
+        .unwrap();
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("one");
+        let second_tab = workspace.test_add_tab(Some("logs"));
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.keybinds.next_tab = config.keybinds().next_tab;
+        app.state.keybinds.previous_tab = config.keybinds().previous_tab;
+        app.state.mode = Mode::Terminal;
+        app.state.switch_workspace_tab(0, 0);
+
+        app.route_client_input(vec![0x02]);
+        app.route_client_input(b"\x1b[9;;9u".to_vec());
+
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert_eq!(app.state.workspaces[0].active_tab, second_tab);
+
+        app.route_client_input(vec![0x02]);
+        app.route_client_input(b"\x1b[9;2;9u".to_vec());
+
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert_eq!(app.state.workspaces[0].active_tab, 0);
+    }
+
+    #[test]
+    fn route_client_input_prefix_escape_is_not_dropped_with_kitty_associated_control_text() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        app.route_client_input(vec![0x02]);
+        assert_eq!(app.state.mode, Mode::Prefix);
+
+        app.route_client_input(b"\x1b[27;;27u".to_vec());
+        assert_eq!(app.state.mode, Mode::Terminal);
+    }
+
+    #[tokio::test]
+    async fn route_client_input_double_prefix_passes_prefix_through_to_focused_pane() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) = TerminalRuntime::test_with_channel(80, 24);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.prefix_code = KeyCode::Char('l');
+        app.state.prefix_mods = KeyModifiers::CONTROL;
+
+        app.route_client_input(vec![0x0c]);
+        assert_eq!(app.state.mode, Mode::Prefix);
+
+        app.route_client_input(vec![0x0c]);
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert_eq!(rx.recv().await.unwrap(), bytes::Bytes::from(vec![0x0c]));
+    }
+
+    #[tokio::test]
+    async fn route_client_input_reencodes_terminal_keys_for_focused_pane_protocol() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) = TerminalRuntime::test_with_channel(80, 24);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        // Ghostty/kitty-style Ctrl-C should be normalized back to the pane's
+        // negotiated encoding instead of being forwarded verbatim.
+        app.route_client_input(b"\x1b[99;5u".to_vec());
+
+        assert_eq!(rx.recv().await.unwrap(), bytes::Bytes::from(vec![3]));
+
+        // iTerm2 and rxvt-style hosts may send F4 as CSI 14~. Normalize it
+        // through the same semantic key path instead of leaking host bytes.
+        app.route_client_input(b"\x1b[14~".to_vec());
+
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            bytes::Bytes::from_static(b"\x1bOS")
+        );
+    }
+
+    #[tokio::test]
+    async fn host_report_all_supplies_printable_releases_for_event_type_only_panes() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) = TerminalRuntime::test_with_channel_and_scrollback_bytes(
+            80,
+            24,
+            0,
+            b"\x1b[>4;2m\x1b[=3;1u",
+            4,
+        );
+        assert_eq!(
+            runtime.keyboard_protocol(),
+            crate::input::KeyboardProtocol::Kitty { flags: 3 }
+        );
+        assert!(runtime
+            .input_state()
+            .is_some_and(|state| state.modify_other_keys));
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        assert!(app.host_keyboard_report_all_requested());
+
+        app.route_client_input(b"\x1b[106;1:1u\x1b[106;1:2u\x1b[106;1:3u".to_vec());
+        assert_eq!(rx.recv().await.unwrap(), bytes::Bytes::from_static(b"j"));
+        assert_eq!(rx.recv().await.unwrap(), bytes::Bytes::from_static(b"j"));
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            bytes::Bytes::from_static(b"\x1b[106;1:3u")
+        );
+        assert!(rx.try_recv().is_err());
+
+        let runtime = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, focused)
+            .unwrap();
+        runtime.test_process_pty_bytes(b"\x1b[>4;0m");
+        assert!(!runtime
+            .input_state()
+            .is_some_and(|state| state.modify_other_keys));
+        assert!(!app.host_keyboard_report_all_requested());
+
+        #[cfg(unix)]
+        {
+            runtime.test_process_pty_bytes(b"\x1b[>4;1m");
+            assert!(!runtime
+                .input_state()
+                .is_some_and(|state| state.modify_other_keys));
+            assert!(!app.host_keyboard_report_all_requested());
+        }
+    }
+
+    #[tokio::test]
+    async fn host_report_all_follows_terminal_protocol_and_command_modes() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, _rx) =
+            TerminalRuntime::test_with_channel_and_scrollback_bytes(80, 24, 0, b"\x1b[>15u", 1);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        assert!(app.host_keyboard_report_all_requested());
+
+        app.state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, focused)
+            .unwrap()
+            .test_process_pty_bytes(b"\x1b[<u");
+        assert!(!app.host_keyboard_report_all_requested());
+
+        app.state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, focused)
+            .unwrap()
+            .test_process_pty_bytes(b"\x1b[>15u");
+        let other_pane = app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
+        let (other_runtime, _rx) =
+            TerminalRuntime::test_with_channel_and_scrollback_bytes(80, 24, 0, b"\x1b[>7u", 1);
+        app.state.workspaces[0].tabs[0]
+            .runtimes
+            .insert(other_pane, other_runtime);
+        assert_eq!(app.state.workspaces[0].focused_pane_id(), Some(other_pane));
+        assert!(!app.host_keyboard_report_all_requested());
+
+        assert!(app.state.focus_pane_in_workspace(0, focused));
+        app.state.mode = Mode::Prefix;
+        assert!(app.host_keyboard_report_all_requested());
+        app.state.mode = Mode::Navigate;
+        assert!(app.host_keyboard_report_all_requested());
+        app.state.mode = Mode::RenameWorkspace;
+        assert!(!app.host_keyboard_report_all_requested());
+    }
+
+    #[tokio::test]
+    async fn route_client_input_forwards_report_all_printable_event_kinds() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) =
+            TerminalRuntime::test_with_channel_and_scrollback_bytes(80, 24, 0, b"\x1b[>15u", 4);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        app.route_client_input(b"\x1b[106u\x1b[106;1:2u\x1b[106;1:3u".to_vec());
+
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            bytes::Bytes::from_static(b"\x1b[106;1:1u")
+        );
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            bytes::Bytes::from_static(b"\x1b[106;1:2u")
+        );
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            bytes::Bytes::from_static(b"\x1b[106;1:3u")
+        );
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn explicit_text_commit_bypasses_bindings_leases_and_key_encoding() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) =
+            TerminalRuntime::test_with_channel_and_scrollback_bytes(80, 24, 0, b"\x1b[>15u", 2);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        app.route_client_events(
+            vec![crate::raw_input::RawInputEvent::Text(
+                crate::input::TextCommit::new("你🙂"),
+            )],
+            false,
+        );
+
+        assert_eq!(rx.recv().await.unwrap().as_ref(), "你🙂".as_bytes());
+        assert!(rx.try_recv().is_err());
+        assert!(app.input_leases.is_empty());
+    }
+
+    #[tokio::test]
+    async fn committed_ime_text_bypasses_report_all_key_encoding() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) =
+            TerminalRuntime::test_with_channel_and_scrollback_bytes(80, 24, 0, b"\x1b[>15u", 2);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        app.route_client_input("你".as_bytes().to_vec());
+
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            bytes::Bytes::from_static("你".as_bytes())
+        );
+        assert!(app.input_leases.is_empty());
+    }
+
+    #[tokio::test]
+    async fn kitty_associated_ime_text_bypasses_report_all_key_encoding() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) =
+            TerminalRuntime::test_with_channel_and_scrollback_bytes(80, 24, 0, b"\x1b[>15u", 2);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        app.route_client_input(b"\x1b[32;;20320:22909u".to_vec());
+
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            bytes::Bytes::from_static("你好".as_bytes())
+        );
+        assert!(rx.try_recv().is_err());
+        assert!(app.input_leases.is_empty());
+    }
+
+    #[tokio::test]
+    async fn committed_ascii_uppercase_bypasses_report_all_key_encoding() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) =
+            TerminalRuntime::test_with_channel_and_scrollback_bytes(80, 24, 0, b"\x1b[>15u", 2);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        app.route_client_input(b"A".to_vec());
+
+        assert_eq!(rx.recv().await.unwrap(), bytes::Bytes::from_static(b"A"));
+        assert!(app.input_leases.is_empty());
+    }
+
+    #[tokio::test]
+    async fn committed_text_does_not_erase_owned_physical_key() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) =
+            TerminalRuntime::test_with_channel_and_scrollback_bytes(80, 24, 0, b"\x1b[>15u", 4);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        app.route_client_input(b"\x1b[106u".to_vec());
+        app.route_client_input(b"j".to_vec());
+        app.route_client_input(b"\x1b[106;1:3u".to_vec());
+
+        assert_eq!(
+            rx.try_recv().expect("physical press"),
+            bytes::Bytes::from_static(b"\x1b[106;1:1u")
+        );
+        assert_eq!(
+            rx.try_recv().expect("committed text"),
+            bytes::Bytes::from_static(b"j")
+        );
+        assert_eq!(
+            rx.try_recv().expect("physical release"),
+            bytes::Bytes::from_static(b"\x1b[106;1:3u")
+        );
+        assert!(app.input_leases.is_empty());
+    }
+
+    #[tokio::test]
+    async fn outer_focus_loss_releases_owned_report_all_keys() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) =
+            TerminalRuntime::test_with_channel_and_scrollback_bytes(80, 24, 0, b"\x1b[>15u", 3);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        app.route_client_events(
+            vec![
+                raw_key(
+                    KeyCode::Char('j'),
+                    KeyModifiers::empty(),
+                    KeyEventKind::Press,
+                ),
+                crate::raw_input::RawInputEvent::OuterFocusLost,
+            ],
+            false,
+        );
+
+        assert_eq!(
+            rx.try_recv().expect("forwarded press"),
+            bytes::Bytes::from_static(b"\x1b[106;1:1u")
+        );
+        assert_eq!(
+            rx.try_recv().expect("synthetic release on focus loss"),
+            bytes::Bytes::from_static(b"\x1b[106;1:3u")
+        );
+        assert!(app.input_leases.is_empty());
+    }
+
+    #[tokio::test]
+    async fn disconnected_input_source_releases_owned_report_all_keys() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) =
+            TerminalRuntime::test_with_channel_and_scrollback_bytes(80, 24, 0, b"\x1b[>15u", 3);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        app.route_client_events_from(
+            42,
+            vec![raw_key(
+                KeyCode::Char('j'),
+                KeyModifiers::empty(),
+                KeyEventKind::Press,
+            )],
+            false,
+        );
+        app.clear_input_source(42);
+
+        assert_eq!(
+            rx.try_recv().expect("forwarded press"),
+            bytes::Bytes::from_static(b"\x1b[106;1:1u")
+        );
+        assert_eq!(
+            rx.try_recv().expect("synthetic release on disconnect"),
+            bytes::Bytes::from_static(b"\x1b[106;1:3u")
+        );
+        assert!(app.input_leases.is_empty());
+    }
+
+    #[tokio::test]
+    async fn physical_count_one_repeats_and_release_keep_the_pressed_pane() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let pressed_pane = workspace.focused_pane_id().unwrap();
+        let other_pane = workspace.test_split(ratatui::layout::Direction::Horizontal);
+        workspace.tabs[0].layout.focus_pane(pressed_pane);
+        let (pressed_runtime, mut pressed_rx) =
+            TerminalRuntime::test_with_channel_and_scrollback_bytes(80, 24, 0, b"\x1b[>15u", 5);
+        let (other_runtime, mut other_rx) =
+            TerminalRuntime::test_with_channel_and_scrollback_bytes(80, 24, 0, b"\x1b[>15u", 2);
+        workspace.tabs[0]
+            .runtimes
+            .insert(pressed_pane, pressed_runtime);
+        workspace.tabs[0].runtimes.insert(other_pane, other_runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        let record = crate::input::WindowsKeyRecord {
+            key_down: true,
+            repeat_count: 1,
+            virtual_key_code: 65,
+            virtual_scan_code: 30,
+            unicode: 97,
+            control_key_state: 0,
+        };
+        let roundtrip = |events: Vec<crate::protocol::ClientInputEvent>| {
+            let message = crate::protocol::ClientMessage::InputEvents { events };
+            let encoded =
+                bincode::serde::encode_to_vec(&message, bincode::config::standard()).unwrap();
+            let (decoded, _): (crate::protocol::ClientMessage, _) =
+                bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+            let crate::protocol::ClientMessage::InputEvents { events } = decoded else {
+                panic!("expected structured input events");
+            };
+            events
+                .into_iter()
+                .map(|event| event.to_raw_input_event())
+                .collect()
+        };
+        let event = |kind, record| crate::protocol::ClientInputEvent::Key {
+            code: crate::protocol::ClientKeyCode::Char('a'),
+            modifiers: 0,
+            kind,
+            repeat_count: 1,
+            generated_text: None,
+            source: crate::protocol::ClientKeySource::WindowsConsole { record },
+        };
+
+        app.route_client_events(
+            roundtrip(vec![event(crate::protocol::ClientKeyKind::Press, record)]),
+            false,
+        );
+        assert!(app.state.focus_pane_in_workspace(0, other_pane));
+        app.route_client_events(
+            roundtrip(vec![
+                event(crate::protocol::ClientKeyKind::Press, record),
+                event(crate::protocol::ClientKeyKind::Repeat, record),
+                event(
+                    crate::protocol::ClientKeyKind::Release,
+                    crate::input::WindowsKeyRecord {
+                        key_down: false,
+                        unicode: 0,
+                        ..record
+                    },
+                ),
+            ]),
+            false,
+        );
+
+        for expected in [
+            b"\x1b[97;1:1u".as_slice(),
+            b"\x1b[97;1:2u".as_slice(),
+            b"\x1b[97;1:2u".as_slice(),
+            b"\x1b[97;1:3u".as_slice(),
+        ] {
+            assert_eq!(pressed_rx.try_recv().unwrap().as_ref(), expected);
+        }
+        assert!(pressed_rx.try_recv().is_err());
+        assert!(other_rx.try_recv().is_err());
+        assert!(app.input_leases.is_empty());
+    }
+
+    #[tokio::test]
+    async fn grouped_physical_press_and_runtime_loss_preserve_count_then_close_the_lease() {
+        let mut app = test_app();
+        let workspace = Workspace::test_new("test");
+        let pane_id = workspace.focused_pane_id().unwrap();
+        let terminal_id = workspace.tabs[0].terminal_id(pane_id).unwrap().clone();
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        let (runtime, mut rx) =
+            TerminalRuntime::test_with_channel_and_scrollback_bytes(80, 24, 0, b"\x1b[>15u", 2);
+        app.terminal_runtimes.insert(terminal_id.clone(), runtime);
+
+        let record = crate::input::WindowsKeyRecord {
+            key_down: true,
+            repeat_count: 3,
+            virtual_key_code: 65,
+            virtual_scan_code: 30,
+            unicode: 97,
+            control_key_state: 0,
+        };
+        let message = crate::protocol::ClientMessage::InputEvents {
+            events: vec![crate::protocol::ClientInputEvent::Key {
+                code: crate::protocol::ClientKeyCode::Char('a'),
+                modifiers: 0,
+                kind: crate::protocol::ClientKeyKind::Press,
+                repeat_count: 3,
+                generated_text: None,
+                source: crate::protocol::ClientKeySource::WindowsConsole { record },
+            }],
+        };
+        let encoded = bincode::serde::encode_to_vec(&message, bincode::config::standard()).unwrap();
+        let (decoded, _): (crate::protocol::ClientMessage, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+        let crate::protocol::ClientMessage::InputEvents { events } = decoded else {
+            panic!("expected structured input events");
+        };
+
+        app.route_client_events(
+            events
+                .into_iter()
+                .map(|event| event.to_raw_input_event())
+                .collect(),
+            false,
+        );
+        app.shutdown_terminal_runtime(terminal_id.clone());
+
+        assert_eq!(
+            rx.try_recv().expect("grouped press"),
+            bytes::Bytes::from_static(b"\x1b[97;1:1u\x1b[97;1:2u\x1b[97;1:2u")
+        );
+        assert_eq!(
+            rx.try_recv()
+                .expect("synthetic release before runtime shutdown"),
+            bytes::Bytes::from_static(b"\x1b[97;1:3u")
+        );
+        assert!(rx.try_recv().is_err());
+        assert!(app.input_leases.is_empty());
+        assert!(app.terminal_runtimes.get(&terminal_id).is_none());
+    }
+
+    #[tokio::test]
+    async fn report_all_repeat_and_release_return_to_the_pressed_pane() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let pressed_pane = workspace.focused_pane_id().unwrap();
+        let other_pane = workspace.test_split(ratatui::layout::Direction::Horizontal);
+        workspace.tabs[0].layout.focus_pane(pressed_pane);
+        let (pressed_runtime, mut pressed_rx) =
+            TerminalRuntime::test_with_channel_and_scrollback_bytes(80, 24, 0, b"\x1b[>15u", 4);
+        let (other_runtime, mut other_rx) =
+            TerminalRuntime::test_with_channel_and_scrollback_bytes(80, 24, 0, b"\x1b[>15u", 4);
+        workspace.tabs[0]
+            .runtimes
+            .insert(pressed_pane, pressed_runtime);
+        workspace.tabs[0].runtimes.insert(other_pane, other_runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        app.route_client_input(b"\x1b[106u".to_vec());
+        assert!(app.state.focus_pane_in_workspace(0, other_pane));
+        app.route_client_input(b"\x1b[106;1:2u\x1b[106;1:3u".to_vec());
+
+        assert_eq!(
+            pressed_rx.recv().await.unwrap(),
+            bytes::Bytes::from_static(b"\x1b[106;1:1u")
+        );
+        assert_eq!(
+            pressed_rx.recv().await.unwrap(),
+            bytes::Bytes::from_static(b"\x1b[106;1:2u")
+        );
+        assert_eq!(
+            pressed_rx.recv().await.unwrap(),
+            bytes::Bytes::from_static(b"\x1b[106;1:3u")
+        );
+        assert!(pressed_rx.try_recv().is_err());
+        assert!(other_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn report_all_key_ownership_is_isolated_by_client() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let first_pane = workspace.focused_pane_id().unwrap();
+        let second_pane = workspace.test_split(ratatui::layout::Direction::Horizontal);
+        workspace.tabs[0].layout.focus_pane(first_pane);
+        let (first_runtime, mut first_rx) =
+            TerminalRuntime::test_with_channel_and_scrollback_bytes(80, 24, 0, b"\x1b[>15u", 3);
+        let (second_runtime, mut second_rx) =
+            TerminalRuntime::test_with_channel_and_scrollback_bytes(80, 24, 0, b"\x1b[>15u", 3);
+        workspace.tabs[0].runtimes.insert(first_pane, first_runtime);
+        workspace.tabs[0]
+            .runtimes
+            .insert(second_pane, second_runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        app.route_client_events_from(
+            1,
+            vec![raw_key(
+                KeyCode::Char('j'),
+                KeyModifiers::empty(),
+                KeyEventKind::Press,
+            )],
+            false,
+        );
+        assert!(app.state.focus_pane_in_workspace(0, second_pane));
+        app.route_client_events_from(
+            2,
+            vec![raw_key(
+                KeyCode::Char('j'),
+                KeyModifiers::empty(),
+                KeyEventKind::Press,
+            )],
+            false,
+        );
+        app.route_client_events_from(
+            1,
+            vec![raw_key(
+                KeyCode::Char('j'),
+                KeyModifiers::empty(),
+                KeyEventKind::Release,
+            )],
+            false,
+        );
+        app.route_client_events_from(
+            2,
+            vec![raw_key(
+                KeyCode::Char('j'),
+                KeyModifiers::empty(),
+                KeyEventKind::Release,
+            )],
+            false,
+        );
+
+        for rx in [&mut first_rx, &mut second_rx] {
+            assert_eq!(
+                rx.recv().await.unwrap(),
+                bytes::Bytes::from_static(b"\x1b[106;1:1u")
+            );
+            assert_eq!(
+                rx.recv().await.unwrap(),
+                bytes::Bytes::from_static(b"\x1b[106;1:3u")
+            );
+            assert!(rx.try_recv().is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn report_all_release_survives_modifier_release_order() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) =
+            TerminalRuntime::test_with_channel_and_scrollback_bytes(80, 24, 0, b"\x1b[>15u", 3);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        app.route_client_input(b"\x1b[106:74;2u\x1b[106;1:3u".to_vec());
+
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            bytes::Bytes::from_static(b"\x1b[106:74;2:1u")
+        );
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            bytes::Bytes::from_static(b"\x1b[106;1:3u")
+        );
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn route_client_input_does_not_forward_release_for_consumed_prefix() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) =
+            TerminalRuntime::test_with_channel_and_scrollback_bytes(80, 24, 0, b"\x1b[>15u", 2);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        app.route_client_input(b"\x1b[98;5u\x1b[98;5:3u".to_vec());
+
+        assert_eq!(app.state.mode, Mode::Prefix);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn route_client_input_preserves_shift_enter_for_modify_other_keys_pane() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) = TerminalRuntime::test_with_channel(80, 24);
+        runtime.test_process_pty_bytes(b"\x1b[>4;1m");
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        app.route_client_input(b"\x1b[13;2u".to_vec());
+
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            bytes::Bytes::from_static(b"\x1b[27;2;13~")
+        );
+    }
+
+    #[tokio::test]
+    async fn route_client_input_splits_multi_event_payloads_before_forwarding() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) = TerminalRuntime::test_with_channel(80, 24);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        app.route_client_input(b"ab".to_vec());
+
+        assert_eq!(rx.recv().await.unwrap(), bytes::Bytes::from_static(b"a"));
+        assert_eq!(rx.recv().await.unwrap(), bytes::Bytes::from_static(b"b"));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn route_client_input_forwards_multilingual_ime_text_to_focused_pane() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let text = "中日한🙂";
+        let (runtime, mut rx) =
+            TerminalRuntime::test_with_channel_capacity(80, 24, text.chars().count());
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        app.route_client_input(text.as_bytes().to_vec());
+
+        let mut forwarded = Vec::new();
+        for _ in text.chars() {
+            let chunk = rx.recv().await.unwrap();
+            forwarded.extend_from_slice(&chunk);
+        }
+        assert_eq!(forwarded, text.as_bytes());
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn route_client_input_forwards_long_voice_like_cjk_text_without_truncation() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let text = "你好，今天我们测试一段比较长的语音输入。こんにちは。안녕하세요.🙂".repeat(64);
+        let char_count = text.chars().count();
+        let (runtime, mut rx) = TerminalRuntime::test_with_channel_capacity(80, 24, char_count);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        app.route_client_input(text.as_bytes().to_vec());
+
+        let mut forwarded = Vec::new();
+        for _ in 0..char_count {
+            let chunk = rx.recv().await.unwrap();
+            forwarded.extend_from_slice(&chunk);
+        }
+        assert_eq!(forwarded, text.as_bytes());
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn route_client_input_handles_mouse_events() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+
+        // Send a mouse scroll-up event via SGR encoding.
+        let mouse_bytes = b"\x1b[<64;10;5M".to_vec();
+        // This should not panic even though mouse handling is simplified
+        // in headless mode.
+        app.route_client_input(mouse_bytes);
+        // No assertions on specific behavior — just no panic.
+    }
+
+    #[test]
+    fn route_client_input_advances_onboarding_modal() {
+        let mut app = test_app();
+        app.state.mode = Mode::Onboarding;
+
+        app.route_client_input(b"\r".to_vec());
+
+        assert_eq!(app.state.mode, Mode::Settings);
+        assert_eq!(
+            app.state.settings.section,
+            state::SettingsSection::Integrations
+        );
+    }
+
+    #[test]
+    fn route_client_input_pastes_bracketed_text_into_rename_modal() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::RenameTab;
+        app.state.name_input = "2".into();
+        app.state.name_input_replace_on_type = true;
+
+        app.route_client_input(b"\x1b[200~feature/logs\x1b[201~".to_vec());
+
+        assert_eq!(app.state.name_input, "feature/logs");
+        assert!(!app.state.name_input_replace_on_type);
+    }
+
+    #[test]
+    fn route_client_input_rename_enter_submits_through_api_path() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("old")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::RenameWorkspace;
+        app.state.name_input = "new".into();
+
+        app.route_client_input(b"\r".to_vec());
+
+        assert_eq!(app.state.workspaces[0].custom_name.as_deref(), Some("new"));
+        assert!(app.event_hub.events_after(0).iter().any(|(_, event)| {
+            matches!(event.event, crate::api::schema::EventKind::WorkspaceRenamed)
+        }));
+    }
+
+    #[test]
+    fn route_client_input_context_menu_enter_submits_through_api_path() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("a"), Workspace::test_new("b")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.confirm_close = false;
+        app.state.context_menu = Some(state::ContextMenuState {
+            kind: state::ContextMenuKind::Workspace { ws_idx: 1 },
+            x: 2,
+            y: 2,
+            list: state::MenuListState::new(1),
+        });
+        app.state.mode = Mode::ContextMenu;
+
+        app.route_client_input(b"\r".to_vec());
+
+        assert_eq!(app.state.workspaces.len(), 1);
+        assert_eq!(app.state.workspaces[0].display_name(), "a");
+        assert!(app.event_hub.events_after(0).iter().any(|(_, event)| {
+            matches!(event.event, crate::api::schema::EventKind::WorkspaceClosed)
+        }));
+    }
+
+    #[test]
+    fn raw_ctrl_v_decodes_as_modal_paste_shortcut() {
+        let events = crate::raw_input::parse_raw_input_bytes_sync(&[0x16]);
+        let Some(crate::raw_input::RawInputEvent::Key(key)) = events.first() else {
+            panic!("expected ctrl-v key event");
+        };
+
+        assert!(input::is_modal_paste_shortcut(&key.as_key_event()));
+    }
+
+    #[test]
+    fn route_client_events_pastes_text_into_new_linked_worktree_modal() {
+        let mut app = test_app();
+        app.state.mode = Mode::NewLinkedWorktree;
+        app.state.name_input = "generated-branch".into();
+        app.state.name_input_replace_on_type = true;
+        app.state.worktree_create = Some(state::WorktreeCreateState {
+            source_workspace_id: "source".into(),
+            source_checkout_path: "/repo/herdr".into(),
+            source_existing_membership: None,
+            source_repo_root: "/repo/herdr".into(),
+            repo_key: "repo-key".into(),
+            repo_name: "herdr".into(),
+            branch: "generated-branch".into(),
+            checkout_path: "/repo/herdr-generated-branch".into(),
+            error: None,
+            creating: false,
+        });
+
+        app.route_client_events(
+            vec![crate::raw_input::RawInputEvent::Paste(
+                "feature/linear-302".into(),
+            )],
+            true,
+        );
+
+        assert_eq!(app.state.name_input, "feature/linear-302");
+        assert_eq!(
+            app.state
+                .worktree_create
+                .as_ref()
+                .map(|create| create.branch.as_str()),
+            Some("feature/linear-302")
+        );
+    }
+
+    #[tokio::test]
+    async fn route_client_events_pastes_only_into_popup() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("tiled");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (tiled_runtime, mut tiled_rx) = TerminalRuntime::test_with_channel(80, 24);
+        workspace.tabs[0].runtimes.insert(focused, tiled_runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        let (popup_runtime, mut popup_rx) = TerminalRuntime::test_with_channel(40, 12);
+        app.install_test_popup_runtime(popup_runtime);
+        assert!(app
+            .state
+            .should_capture_host_mouse_from(&app.terminal_runtimes));
+
+        app.route_client_events(
+            vec![crate::raw_input::RawInputEvent::Paste("popup-only".into())],
+            true,
+        );
+
+        assert_eq!(
+            popup_rx.try_recv().unwrap(),
+            bytes::Bytes::from_static(b"popup-only")
+        );
+        assert!(tiled_rx.try_recv().is_err());
+
+        app.route_client_events(
+            vec![raw_key(
+                KeyCode::Char('x'),
+                KeyModifiers::NONE,
+                KeyEventKind::Press,
+            )],
+            true,
+        );
+        assert_eq!(
+            popup_rx.try_recv().unwrap(),
+            bytes::Bytes::from_static(b"x")
+        );
+        assert!(tiled_rx.try_recv().is_err());
+
+        app.state.mode = Mode::Settings;
+        assert!(
+            app.handle_raw_input_event(raw_key(
+                KeyCode::Char('y'),
+                KeyModifiers::NONE,
+                KeyEventKind::Repeat,
+            ))
+            .await
+        );
+        assert_eq!(
+            popup_rx.try_recv().unwrap(),
+            bytes::Bytes::from_static(b"y")
+        );
+        assert!(tiled_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn route_client_events_discards_paste_when_popup_runtime_is_missing() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("tiled");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (tiled_runtime, mut tiled_rx) = TerminalRuntime::test_with_channel(80, 24);
+        workspace.tabs[0].runtimes.insert(focused, tiled_runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        let install_missing_popup = |app: &mut App| {
+            let popup_terminal_id = crate::terminal::TerminalId::alloc();
+            app.state.terminals.insert(
+                popup_terminal_id.clone(),
+                crate::terminal::TerminalState::new(
+                    popup_terminal_id.clone(),
+                    std::path::PathBuf::from("/popup"),
+                ),
+            );
+            app.state.popup_pane = Some(state::PopupPaneState {
+                pane_id: crate::layout::PaneId::alloc(),
+                terminal_id: popup_terminal_id,
+                width: None,
+                height: None,
+            });
+        };
+        install_missing_popup(&mut app);
+
+        app.route_client_events(
+            vec![crate::raw_input::RawInputEvent::Paste("discard-me".into())],
+            true,
+        );
+
+        assert!(tiled_rx.try_recv().is_err());
+        assert!(app.state.popup_pane.is_none());
+
+        install_missing_popup(&mut app);
+        assert!(
+            app.handle_raw_input_event(crate::raw_input::RawInputEvent::Paste(
+                "discard-monolithic".into(),
+            ))
+            .await
+        );
+        assert!(tiled_rx.try_recv().is_err());
+        assert!(app.state.popup_pane.is_none());
+    }
+
+    #[tokio::test]
+    async fn popup_mouse_motion_preserves_scrollback() {
+        let mut app = test_app();
+        app.state.mode = Mode::Terminal;
+        app.state.view.terminal_area = ratatui::layout::Rect::new(0, 0, 80, 24);
+        let (popup_runtime, mut popup_rx) = TerminalRuntime::test_with_channel_and_scrollback_bytes(
+            40,
+            2,
+            1024,
+            b"one\r\ntwo\r\nthree\r\n\x1b[?1003h\x1b[?1006h",
+            4,
+        );
+        popup_runtime.scroll_up(1);
+        assert!(popup_runtime
+            .scroll_metrics()
+            .is_some_and(|metrics| metrics.offset_from_bottom > 0));
+        app.install_test_popup_runtime(popup_runtime);
+        let (_, inner) =
+            crate::ui::popup_pane_rects(&app.state, app.state.view.terminal_area).unwrap();
+
+        app.route_client_events(
+            vec![crate::raw_input::RawInputEvent::Mouse(
+                crossterm::event::MouseEvent {
+                    kind: crossterm::event::MouseEventKind::Moved,
+                    column: inner.x + 1,
+                    row: inner.y,
+                    modifiers: crossterm::event::KeyModifiers::NONE,
+                },
+            )],
+            true,
+        );
+
+        assert!(popup_rx.try_recv().is_ok());
+        assert!(app
+            .popup_runtime()
+            .and_then(TerminalRuntime::scroll_metrics)
+            .is_some_and(|metrics| metrics.offset_from_bottom > 0));
+    }
+
+    #[tokio::test]
+    async fn route_client_events_routes_popup_mouse_when_global_capture_is_disabled() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("tiled");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (tiled_runtime, mut tiled_rx) = TerminalRuntime::test_with_channel(80, 24);
+        tiled_runtime.test_process_pty_bytes(b"\x1b[?1000h\x1b[?1006h");
+        workspace.tabs[0].runtimes.insert(focused, tiled_runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.mouse_capture = false;
+        app.state.view.terminal_area = ratatui::layout::Rect::new(0, 0, 80, 24);
+
+        let (popup_runtime, mut popup_rx) = TerminalRuntime::test_with_channel(40, 12);
+        popup_runtime.test_process_pty_bytes(b"\x1b[?1000h\x1b[?1006h");
+        app.install_test_popup_runtime(popup_runtime);
+        let (_, inner) =
+            crate::ui::popup_pane_rects(&app.state, app.state.view.terminal_area).unwrap();
+
+        app.route_client_events(
+            vec![crate::raw_input::RawInputEvent::Mouse(
+                crossterm::event::MouseEvent {
+                    kind: crossterm::event::MouseEventKind::Down(
+                        crossterm::event::MouseButton::Left,
+                    ),
+                    column: inner.x,
+                    row: inner.y,
+                    modifiers: crossterm::event::KeyModifiers::NONE,
+                },
+            )],
+            true,
+        );
+
+        assert!(popup_rx.try_recv().is_ok());
+        assert!(tiled_rx.try_recv().is_err());
+
+        assert!(
+            app.handle_raw_input_event(crate::raw_input::RawInputEvent::Mouse(
+                crossterm::event::MouseEvent {
+                    kind: crossterm::event::MouseEventKind::Down(
+                        crossterm::event::MouseButton::Left,
+                    ),
+                    column: inner.x + 1,
+                    row: inner.y,
+                    modifiers: crossterm::event::KeyModifiers::NONE,
+                },
+            ))
+            .await
+        );
+        assert!(popup_rx.try_recv().is_ok());
+        assert!(tiled_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn route_client_input_closes_release_notes_modal() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::ReleaseNotes;
+        app.state.release_notes = Some(release_notes_state());
+
+        app.route_client_input(b"\x1b".to_vec());
+
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(app.state.release_notes.is_none());
+    }
+
+    #[test]
+    fn route_client_input_closes_settings_modal() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Settings;
+        app.state.settings.original_theme = Some(app.state.theme_name.clone());
+        app.state.settings.original_palette = Some(app.state.palette.clone());
+
+        app.route_client_input(b"\x1b".to_vec());
+
+        assert_eq!(app.state.mode, Mode::Terminal);
+    }
+
+    #[test]
+    fn route_client_input_updates_host_terminal_theme_from_osc_response() {
+        let mut app = test_app();
+
+        app.route_client_input(b"\x1b]11;#123456\x07\x1b]4;7;rgb:aaaa/bbbb/cccc\x1b\\".to_vec());
+
+        assert_eq!(
+            app.state.host_terminal_theme.background,
+            Some(crate::terminal_theme::RgbColor {
+                r: 0x12,
+                g: 0x34,
+                b: 0x56,
+            })
+        );
+        assert_eq!(
+            app.state.host_terminal_theme.palette[7],
+            Some(crate::terminal_theme::RgbColor {
+                r: 0xaa,
+                g: 0xbb,
+                b: 0xcc,
+            })
+        );
+
+        app.route_client_input(crate::raw_input::GHOSTTY_COLOR_SCHEME_DARK_REPORT.to_vec());
+        assert_eq!(
+            app.state.host_terminal_theme.palette[7],
+            Some(crate::terminal_theme::RgbColor {
+                r: 0xaa,
+                g: 0xbb,
+                b: 0xcc,
+            })
+        );
+
+        app.route_client_input(b"\x1b]4;7;rgb:dddd/eeee/ffff\x1b\\".to_vec());
+        assert_eq!(
+            app.state.host_terminal_theme.palette[7],
+            Some(crate::terminal_theme::RgbColor {
+                r: 0xdd,
+                g: 0xee,
+                b: 0xff,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn route_client_input_does_not_forward_incomplete_osc_introducer_to_pane() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) = TerminalRuntime::test_with_channel_capacity(80, 24, 1);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        app.route_client_input(b"\x1b]".to_vec());
+
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn parse_raw_input_bytes_with_ranges_tracks_offsets() {
+        // Verify that the range-aware parser correctly tracks byte offsets
+        // for events within a multi-event input buffer.
+        let input = b"\x1b[Aa".to_vec(); // Up arrow + 'a'
+        let events = crate::raw_input::parse_raw_input_bytes_with_ranges(&input);
+
+        assert_eq!(events.len(), 2, "should parse Up arrow and 'a'");
+        // Up arrow: \x1b[A = 3 bytes starting at offset 0
+        assert_eq!(events[0].start, 0);
+        assert_eq!(events[0].len, 3);
+        // 'a': 1 byte starting at offset 3
+        assert_eq!(events[1].start, 3);
+        assert_eq!(events[1].len, 1);
+
+        // Verify the raw bytes for each event are correct.
+        assert_eq!(
+            &input[events[0].start..events[0].start + events[0].len],
+            b"\x1b[A"
+        );
+        assert_eq!(
+            &input[events[1].start..events[1].start + events[1].len],
+            b"a"
+        );
+    }
 }
