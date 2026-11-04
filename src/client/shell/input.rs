@@ -696,11 +696,6 @@ impl ClientShellState {
                     outcome.repaint = true;
                     return self.focused_pane_id().map(ClientInputTarget::Pane);
                 }
-                if key.code == KeyCode::Esc {
-                    self.mode = return_mode;
-                    outcome.repaint = true;
-                    return None;
-                }
                 if let Some(binding) =
                     crate::input::resolve_prefix_binding(&self.config.keybinds.keybinds, key)
                 {

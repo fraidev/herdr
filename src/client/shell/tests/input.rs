@@ -959,6 +959,63 @@ fn every_configured_prefix_enters_prefix_mode() {
     }
 }
 
+#[test]
+fn unbound_prefix_escape_exits_prefix_mode() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    let (prefix_key, prefix_modifiers) = state.config.keybinds.prefix[0];
+    let _ = state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
+        prefix_key,
+        prefix_modifiers,
+    ))]);
+    assert_eq!(state.mode, ClientShellMode::Prefix);
+
+    let _ = state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
+        KeyCode::Esc,
+        KeyModifiers::empty(),
+    ))]);
+
+    assert_eq!(state.mode, ClientShellMode::Terminal);
+    assert!(state.copy_mode.is_none());
+}
+
+#[test]
+fn prefix_escape_copy_mode_binding_enters_copy_mode() {
+    for binding in ["prefix+esc", "prefix+escape"] {
+        let config: Config = toml::from_str(&format!(
+            r#"
+[keys]
+copy_mode = "{binding}"
+"#
+        ))
+        .unwrap();
+        let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+        state.set_snapshot(Box::new(snapshot()));
+        let mut pane_surface = surface();
+        pane_surface.panes[0].scroll = Some(crate::protocol::PaneSurfaceScrollMetrics {
+            offset_from_bottom: 0,
+            max_offset_from_bottom: 20,
+            viewport_rows: 2,
+        });
+        state.set_pane_surface(pane_surface);
+        state.compose(106, 20).expect("composed frame");
+
+        let (prefix_key, prefix_modifiers) = state.config.keybinds.prefix[0];
+        let _ = state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
+            prefix_key,
+            prefix_modifiers,
+        ))]);
+        assert_eq!(state.mode, ClientShellMode::Prefix, "{binding}");
+        let _ = state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
+            KeyCode::Esc,
+            KeyModifiers::empty(),
+        ))]);
+
+        assert_eq!(state.mode, ClientShellMode::Copy, "{binding}");
+        assert!(state.copy_mode.is_some(), "{binding}");
+    }
+}
+
 fn pane_text_commits(outcome: &ClientShellInput) -> Vec<String> {
     outcome
         .requests
